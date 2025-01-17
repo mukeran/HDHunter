@@ -1,0 +1,9 @@
+bin/
+build/*
+.vscode
+.gdb_history
+libfuzzer_bin
+*.so
+*.a
+tester_dyn
+tester_static

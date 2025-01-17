@@ -1,0 +1,19 @@
+
+Welcome to the JDK!
+===================
+
+For information about building the JDK, including how to retrieve all
+of the source code, please see either of these files:
+
+  * doc/building.html   (html version)
+  * doc/building.md     (markdown version)
+
+See http://openjdk.java.net/ for more information about the OpenJDK
+Community and the JDK.
+
+## HDHunter
+
+Parameters:
+```
+JDK_JAVA_OPTIONS=-XX:+WitcherInstrumentation HDHUNTER_WITCHER_JAVA_FILTER_PATH=/hdhunter/witcher_javafilters __AFL_SHM=xxx java ...
+```

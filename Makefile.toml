@@ -1,0 +1,59 @@
+[config]
+default_to_workspace = false
+skip_core_tasks = true
+
+[tasks.default]
+dependencies = ["build"]
+
+[tasks.clean]
+command = "cargo"
+args = ["clean"]
+
+[tasks.build-all]
+command = "cargo"
+args = ["build"]
+
+[tasks.build-rt-no-edge]
+script = [
+    "cargo build --features no_edge --package hdhunter-rt",
+    "mv target/debug/libhdhunter_rt.a target/debug/libhdhunter_rt_no_edge.a",
+    "mv target/debug/libhdhunter_rt.so target/debug/libhdhunter_rt_no_edge.so"
+]
+
+[tasks.build-rt-java]
+script = [
+    "cargo build --features java --package hdhunter-rt",
+    "mv target/debug/libhdhunter_rt.a target/debug/libhdhunter_rt_java.a",
+    "mv target/debug/libhdhunter_rt.so target/debug/libhdhunter_rt_java.so"
+]
+
+[tasks.build-all-release]
+command = "cargo"
+args = ["build", "--release"]
+
+[tasks.build]
+dependencies = [
+    "build-rt-no-edge",
+    "build-rt-java",
+    "build-all",
+    "build-all-release"
+]
+
+[tasks.setup-qemu]
+script = [
+    "sudo modprobe -r kvm-intel",
+    "sudo modprobe -r kvm",
+    "sudo modprobe kvm enable_vmware_backdoor=1",
+    "sudo modprobe kvm-intel",
+    "cat /sys/module/kvm/parameters/enable_vmware_backdoor"
+]
+
+[tasks.pack]
+env = { MEMORY = { value = "4096", condition = { env_not_set = ["MEMORY"] }}}
+script = [
+    "echo \"Packing workspace for ${TARGET}, memory ${MEMORY}\"",
+    "mkdir -p /tmp/hdhunter-workspace/${TARGET}",
+    "cd ./vendors/packer",
+    "python3 \"./packer/nyx_packer.py\" ../../fuzzing_targets/dist/${TARGET}.tar.gz /tmp/hdhunter-workspace/${TARGET} afl instrumentation --purge --debug_stdin_stderr",
+    "python3 \"./packer/nyx_config_gen.py\" /tmp/hdhunter-workspace/${TARGET} Kernel -m ${MEMORY} -w /tmp/hdhunter-workspace/${TARGET}/workdir"
+]

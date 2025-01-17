@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$/../../.." vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../targets/apache/httpd-2.4.57" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../targets/tomcat/apache-tomcat-10.1.9-src" vcs="Git" />
+  </component>
+</project>

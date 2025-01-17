@@ -1,0 +1,7 @@
++org.apache
++jakarta
++jdk.internal.net.http
++java.net.http
++com.sun.net.httpserver
++sun.net.httpserver
++sun.net.www.protocol.http

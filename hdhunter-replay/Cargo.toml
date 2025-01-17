@@ -1,0 +1,15 @@
+[package]
+name = "hdhunter-replay"
+edition = "2021"
+version.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libafl = "0.13.0"
+libafl_bolts = "0.13.0"
+libafl_nyx = { path = "../vendors/libafl_nyx", version = "0.13.0-hdhunter" }
+hdhunter = { path = "../hdhunter" }
+clap = { version = "4.5.3", features = ["derive"] }
+pretty_env_logger = "0.5.0"
+log = "0.4.21"

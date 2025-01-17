@@ -1,0 +1,16 @@
+[package]
+name = "libnyx"
+version = "0.1.0-hdhunter"
+edition = "2018"
+
+[lib]
+name = "libnyx"
+crate-type = ["staticlib", "dylib", "rlib"]
+
+[build-dependencies]
+cbindgen = "0.24.3"
+
+[dependencies]
+config = { path = "../config" }
+fuzz_runner = { path = "../fuzz_runner", version = "0.1.0-hdhunter" }
+libc = "0.2"

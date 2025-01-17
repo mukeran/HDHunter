@@ -1,0 +1,7 @@
+[workspace]
+members = ["hdhunter", "hdhunter-cc", "hdhunter-helper", "hdhunter-replay", "hdhunter-rt", "hdhunter-runner"]
+exclude = ["fuzzing_targets", "vendors"]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.1"

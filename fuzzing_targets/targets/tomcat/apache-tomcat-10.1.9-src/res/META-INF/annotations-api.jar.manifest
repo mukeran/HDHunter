@@ -1,0 +1,11 @@
+Manifest-version: 1.0
+X-Compile-Source-JDK: @source.jdk@
+X-Compile-Target-JDK: @target.jdk@
+
+Name: jakarta/annotation/
+Specification-Title: Jakarta Annotations
+Specification-Version: @annotation.spec.version@
+Specification-Vendor: Eclipse Foundation
+Implementation-Title: jakarta.annotation
+Implementation-Version: @annotation.spec.version@@annotation.revision@
+Implementation-Vendor: Apache Software Foundation

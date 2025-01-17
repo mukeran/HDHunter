@@ -1,0 +1,14 @@
+{
+    "files.associations": {
+        "*.html": "html",
+        "*.go": "go",
+        "array": "c",
+        "string": "c",
+        "string_view": "c",
+        "socket.h": "c",
+        "harness_state.h": "c"
+    },
+    "C_Cpp.default.defines": [
+        "LEGACY_MODE"
+    ]
+}

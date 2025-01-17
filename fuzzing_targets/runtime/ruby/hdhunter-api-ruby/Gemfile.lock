@@ -1,0 +1,23 @@
+PATH
+  remote: .
+  specs:
+    hdhunter-api-ruby (0.1.0)
+      ffi
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    ffi (1.16.3)
+    rake (13.2.0)
+
+PLATFORMS
+  ruby
+  x86_64-linux
+
+DEPENDENCIES
+  ffi (~> 1.16)
+  hdhunter-api-ruby!
+  rake (~> 13.0)
+
+BUNDLED WITH
+   2.5.7

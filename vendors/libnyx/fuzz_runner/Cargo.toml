@@ -1,0 +1,26 @@
+[package]
+name = "fuzz_runner"
+version = "0.1.0-hdhunter"
+authors = ["coco <cornelius@hexgolems.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+nix = "0.26.2"
+time = "0.2.9"
+subprocess = "0.2.4"
+libc = "0.2.68"
+quick-error = "*"
+rand = "0.7.3"
+serde_derive = "1.0"
+serde = "1.0"
+byteorder = "*"
+snafu = "0.6.3"
+timeout-readwrite = "0.3.1"
+glob="0.3.0"
+config={path="../config"}
+colored = "2.0.0"
+derivative = "2.1.1"
+fs4 = "0.5.4"
+
