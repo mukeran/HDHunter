@@ -1,0 +1,512 @@
+diff --git a/modules/generators/mod_cgid.c b/modules/generators/mod_cgid.c
+index 2258a68..d086bbc 100644
+--- a/modules/generators/mod_cgid.c
++++ b/modules/generators/mod_cgid.c
+@@ -872,18 +872,18 @@ static int cgid_start(apr_pool_t *p, server_rec *main_server,
+ {
+ 
+     daemon_should_exit = 0; /* clear setting from previous generation */
+-    if ((daemon_pid = fork()) < 0) {
+-        ap_log_error(APLOG_MARK, APLOG_ERR, errno, main_server, APLOGNO(01253)
+-                     "mod_cgid: Couldn't spawn cgid daemon process");
+-        return DECLINED;
+-    }
+-    else if (daemon_pid == 0) {
+-        if (pcgi == NULL) {
+-            apr_pool_create(&pcgi, p);
+-            apr_pool_tag(pcgi, "cgid_pcgi");
+-        }
+-        exit(cgid_server(main_server) > 0 ? DAEMON_STARTUP_ERROR : -1);
+-    }
++    // if ((daemon_pid = fork()) < 0) {
++    //     ap_log_error(APLOG_MARK, APLOG_ERR, errno, main_server, APLOGNO(01253)
++    //                  "mod_cgid: Couldn't spawn cgid daemon process");
++    //     return DECLINED;
++    // }
++    // else if (daemon_pid == 0) {
++    //     if (pcgi == NULL) {
++    //         apr_pool_create(&pcgi, p);
++    //         apr_pool_tag(pcgi, "cgid_pcgi");
++    //     }
++    //     exit(cgid_server(main_server) > 0 ? DAEMON_STARTUP_ERROR : -1);
++    // }
+     procnew->pid = daemon_pid;
+     procnew->err = procnew->in = procnew->out = NULL;
+     apr_pool_note_subprocess(p, procnew, APR_KILL_AFTER_TIMEOUT);
+diff --git a/modules/http/http_core.c b/modules/http/http_core.c
+index c6cb473..048ccea 100644
+--- a/modules/http/http_core.c
++++ b/modules/http/http_core.c
+@@ -34,6 +34,8 @@
+ 
+ #include "mod_core.h"
+ 
++#include "../../hdhunter_api.h"
++
+ /* Handles for core filters */
+ AP_DECLARE_DATA ap_filter_rec_t *ap_http_input_filter_handle;
+ AP_DECLARE_DATA ap_filter_rec_t *ap_http_header_filter_handle;
+@@ -152,6 +154,17 @@ static int ap_process_http_async_connection(conn_rec *c)
+                     ap_set_conn_count(c->sbh, r, c->keepalives + 1);
+                 }
+                 ap_update_child_status(c->sbh, SERVER_BUSY_WRITE, r);
++
++                // Update encoding
++                hdhunter_set_chunked_encoding(ap_is_chunked(r->pool, apr_table_get(r->headers_in, "Transfer-Encoding")), HDHUNTER_MODE_REQUEST);
++                // Update content_length
++                const char *clen = apr_table_get(r->headers_in, "Content-Length");
++                if (clen != NULL) {
++                    apr_off_t cl;
++                    ap_parse_strict_length(&cl, clen);
++                    hdhunter_set_content_length(cl, HDHUNTER_MODE_REQUEST);
++                }
++
+                 ap_process_async_request(r);
+                 /* After the call to ap_process_request, the
+                  * request pool may have been deleted.  We set
+@@ -172,6 +185,9 @@ static int ap_process_http_async_connection(conn_rec *c)
+         else {   /* ap_read_request failed - client may have closed */
+             cs->state = CONN_STATE_LINGER;
+         }
++
++        // Update message count
++        hdhunter_mark_message_processed(HDHUNTER_MODE_REQUEST);
+     }
+ 
+     return OK;
+diff --git a/modules/http/http_filters.c b/modules/http/http_filters.c
+index 1a8df34..c36880e 100644
+--- a/modules/http/http_filters.c
++++ b/modules/http/http_filters.c
+@@ -48,6 +48,8 @@
+ 
+ #include "mod_core.h"
+ 
++#include "../../hdhunter_api.h"
++
+ #if APR_HAVE_STDARG_H
+ #include <stdarg.h>
+ #endif
+@@ -537,6 +539,14 @@ apr_status_t ap_http_filter(ap_filter_t *f, apr_bucket_brigade *b,
+                     int parsing = 0;
+ 
+                     rv = apr_bucket_read(e, &buffer, &len, APR_BLOCK_READ);
++                    if (f->r->proxyreq != PROXYREQ_RESPONSE) {
++                        // Update consumed length: size and chunk extension
++                        hdhunter_inc_consumed_length(len, HDHUNTER_MODE_REQUEST);
++                    } else {
++                        // Update consumed length (for responses)
++                        hdhunter_inc_consumed_length(len, HDHUNTER_MODE_RESPONSE);
++                    }
++
+                     if (rv == APR_SUCCESS) {
+                         parsing = 1;
+                         if (len > 0) {
+@@ -603,6 +613,18 @@ apr_status_t ap_http_filter(ap_filter_t *f, apr_bucket_brigade *b,
+ 
+                 /* How many bytes did we just read? */
+                 apr_brigade_length(b, 0, &totalread);
++                if (f->r->proxyreq != PROXYREQ_RESPONSE) {
++                    // Update consumed length: message body and chunk body
++                    hdhunter_inc_consumed_length(totalread, HDHUNTER_MODE_REQUEST);
++                    // Update body length
++                    hdhunter_inc_body_length(totalread, HDHUNTER_MODE_REQUEST);
++                } else {
++                    // Update consumed length (for responses)
++                    hdhunter_inc_consumed_length(totalread, HDHUNTER_MODE_RESPONSE);
++                    // Update body length (for responses)
++                    hdhunter_inc_body_length(totalread, HDHUNTER_MODE_RESPONSE);
++                }
++
+                 if (totalread > 0) {
+                     ctx->seen_data = 1;
+                 }
+diff --git a/modules/proxy/ajp_link.c b/modules/proxy/ajp_link.c
+index 4f8a9ef..c17659c 100644
+--- a/modules/proxy/ajp_link.c
++++ b/modules/proxy/ajp_link.c
+@@ -16,6 +16,8 @@
+ 
+ #include "ajp.h"
+ 
++#include "../../hdhunter_api.h"
++
+ APLOG_USE_MODULE(proxy_ajp);
+ 
+ apr_status_t ajp_ilink_send(apr_socket_t *sock, ajp_msg_t *msg)
+@@ -64,6 +66,9 @@ static apr_status_t ilink_read(apr_socket_t *sock, apr_byte_t *buf,
+         else if (status != APR_SUCCESS)
+             return status;          /* any error. */
+ 
++        // HDHunter: inc consumed length
++        hdhunter_inc_consumed_length(length, HDHUNTER_MODE_AJP);
++
+         rdlen += length;
+         length = len - rdlen;
+     }
+diff --git a/modules/proxy/mod_proxy_ajp.c b/modules/proxy/mod_proxy_ajp.c
+index 65773ce..98981d6 100644
+--- a/modules/proxy/mod_proxy_ajp.c
++++ b/modules/proxy/mod_proxy_ajp.c
+@@ -19,6 +19,8 @@
+ #include "mod_proxy.h"
+ #include "ajp.h"
+ 
++#include "../../hdhunter_api.h"
++
+ module AP_MODULE_DECLARE_DATA proxy_ajp_module;
+ 
+ /*
+@@ -505,6 +507,15 @@ static int ap_proxy_ajp_request(apr_pool_t *p, request_rec *r,
+                                       "sent 401 without WWW-Authenticate header");
+                     }
+                 }
++                // HDHunter: Update encoding
++                hdhunter_set_chunked_encoding(ap_is_chunked(r->pool, apr_table_get(r->headers_out, "Transfer-Encoding")), HDHUNTER_MODE_AJP);
++                // HDHunter: Update content_length
++                const char *clen = apr_table_get(r->headers_out, "Content-Length");
++                if (clen != NULL) {
++                    apr_off_t cl;
++                    ap_parse_strict_length(&cl, clen);
++                    hdhunter_set_content_length(cl, HDHUNTER_MODE_AJP);
++                }
+                 headers_sent = 1;
+                 break;
+             case CMD_AJP13_SEND_BODY_CHUNK:
+@@ -556,8 +567,11 @@ static int ap_proxy_ajp_request(apr_pool_t *p, request_rec *r,
+                                 APR_BRIGADE_INSERT_TAIL(output_brigade, e);
+                             }
+                             apr_brigade_length(output_brigade, 0, &bb_len);
+-                            if (bb_len != -1)
++                            if (bb_len != -1) {
+                                 conn->worker->s->read += bb_len;
++                                // HDHunter: inc body length
++                                hdhunter_inc_body_length(bb_len, HDHUNTER_MODE_AJP);
++                            }
+                         }
+                         if (headers_sent) {
+                             if (ap_pass_brigade(r->output_filters,
+@@ -864,6 +878,9 @@ static int proxy_ajp_handler(request_rec *r, proxy_worker *worker,
+         break;
+     }
+ 
++    // HDHunter: Mark message processed
++    hdhunter_mark_message_processed(HDHUNTER_MODE_AJP);
++
+     /* Do not close the socket */
+     ap_proxy_release_connection(scheme, backend, r->server);
+     return status;
+diff --git a/modules/proxy/mod_proxy_fcgi.c b/modules/proxy/mod_proxy_fcgi.c
+index 831bd15..db15ba1 100644
+--- a/modules/proxy/mod_proxy_fcgi.c
++++ b/modules/proxy/mod_proxy_fcgi.c
+@@ -19,6 +19,8 @@
+ #include "util_script.h"
+ #include "ap_expr.h"
+ 
++#include "../../hdhunter_api.h"
++
+ module AP_MODULE_DECLARE_DATA proxy_fcgi_module;
+ 
+ typedef struct {
+@@ -565,6 +567,7 @@ static apr_status_t dispatch(proxy_conn_rec *conn, proxy_dir_conf *conf,
+     char stack_iobuf[AP_IOBUFSIZE];
+     apr_size_t iobuf_size = AP_IOBUFSIZE;
+     char *iobuf = stack_iobuf;
++    apr_off_t readbytes;
+ 
+     *err = NULL;
+     if (conn->worker->s->io_buffer_size_set) {
+@@ -788,6 +791,13 @@ recv_again:
+ 
+                                 *has_responded = 1;
+                                 r->status = status;
++
++                                apr_brigade_length(ob, 0, &readbytes);
++                                if (readbytes > 0) {
++                                    // HDHunter: inc body length
++                                    hdhunter_inc_body_length(readbytes, HDHUNTER_MODE_FASTCGI);
++                                }
++
+                                 rv = ap_pass_brigade(r->output_filters, ob);
+                                 if (rv != APR_SUCCESS) {
+                                     *err = "passing headers brigade to output filters";
+@@ -815,6 +825,16 @@ recv_again:
+                                 }
+                             }
+ 
++                            // HDHunter: Update encoding
++                            hdhunter_set_chunked_encoding(ap_is_chunked(r->pool, apr_table_get(r->headers_out, "Transfer-Encoding")), HDHUNTER_MODE_FASTCGI);
++                            // HDHunter: Update content_length
++                            const char *clen = apr_table_get(r->headers_out, "Content-Length");
++                            if (clen != NULL) {
++                                apr_off_t cl;
++                                ap_parse_strict_length(&cl, clen);
++                                hdhunter_set_content_length(cl, HDHUNTER_MODE_FASTCGI);
++                            }
++
+                             if (ap_proxy_should_override(conf, r->status) && ap_is_initial_req(r)) {
+                                 /*
+                                  * set script_error_status to discard
+@@ -834,6 +854,13 @@ recv_again:
+                                  * reading the headers.
+                                  */
+                                 *has_responded = 1;
++
++                                apr_brigade_length(ob, 0, &readbytes);
++                                if (readbytes > 0) {
++                                    // HDHunter: inc body length
++                                    hdhunter_inc_body_length(readbytes, HDHUNTER_MODE_FASTCGI);
++                                }
++
+                                 rv = ap_pass_brigade(r->output_filters, ob);
+                                 if (rv != APR_SUCCESS) {
+                                     *err = "passing brigade to output filters";
+@@ -861,6 +888,13 @@ recv_again:
+                          */
+                         if (script_error_status == HTTP_OK && !ignore_body) {
+                             *has_responded = 1;
++
++                            apr_brigade_length(ob, 0, &readbytes);
++                            if (readbytes > 0) {
++                                // HDHunter: inc body length
++                                hdhunter_inc_body_length(readbytes, HDHUNTER_MODE_FASTCGI);
++                            }
++
+                             rv = ap_pass_brigade(r->output_filters, ob);
+                             if (rv != APR_SUCCESS) {
+                                 *err = "passing brigade to output filters";
+@@ -885,6 +919,13 @@ recv_again:
+                         APR_BRIGADE_INSERT_TAIL(ob, b);
+ 
+                         *has_responded = 1;
++
++                        apr_brigade_length(ob, 0, &readbytes);
++                        if (readbytes > 0) {
++                            // HDHunter: inc body length
++                            hdhunter_inc_body_length(readbytes, HDHUNTER_MODE_FASTCGI);
++                        }
++
+                         rv = ap_pass_brigade(r->output_filters, ob);
+                         if (rv != APR_SUCCESS) {
+                             *err = "passing brigade to output filters";
+@@ -1222,6 +1263,8 @@ static int proxy_fcgi_handler(request_rec *r, proxy_worker *worker,
+                              server_portstr, input_brigade);
+ 
+ cleanup:
++    // HDHunter: Mark message processed
++    hdhunter_mark_message_processed(HDHUNTER_MODE_FASTCGI);
+     ap_proxy_release_connection(FCGI_SCHEME, backend, r->server);
+     return status;
+ }
+diff --git a/modules/proxy/mod_proxy_http.c b/modules/proxy/mod_proxy_http.c
+index 1842c49..529cd6f 100644
+--- a/modules/proxy/mod_proxy_http.c
++++ b/modules/proxy/mod_proxy_http.c
+@@ -19,6 +19,8 @@
+ #include "mod_proxy.h"
+ #include "ap_regex.h"
+ 
++#include "../../hdhunter_api.h"
++
+ module AP_MODULE_DECLARE_DATA proxy_http_module;
+ 
+ static int (*ap_proxy_clear_connection_fn)(request_rec *r, apr_table_t *headers) =
+@@ -1641,6 +1643,16 @@ int ap_proxy_http_process_response(proxy_http_req_t *req)
+             APR_BRIGADE_INSERT_TAIL(bb, e);
+         }
+ 
++        // HDHunter: Update encoding
++        hdhunter_set_chunked_encoding(ap_is_chunked(r->pool, apr_table_get(r->headers_out, "Transfer-Encoding")), HDHUNTER_MODE_RESPONSE);
++        // HDHunter: Update content_length
++        const char *clen = apr_table_get(r->headers_out, "Content-Length");
++        if (clen != NULL) {
++            apr_off_t cl;
++            ap_parse_strict_length(&cl, clen);
++            hdhunter_set_content_length(cl, HDHUNTER_MODE_RESPONSE);
++        }
++
+         /* send body - but only if a body is expected */
+         if ((!r->header_only) &&                   /* not HEAD request */
+             (proxy_status != HTTP_NO_CONTENT) &&      /* not 204 */
+@@ -2095,6 +2107,8 @@ static int proxy_http_handler(request_rec *r, proxy_worker *worker,
+ 
+     /* Step Six: Clean Up */
+ cleanup:
++    // HDHunter: Mark message processed
++    hdhunter_mark_message_processed(HDHUNTER_MODE_RESPONSE);
+     if (req->backend) {
+         if (status != OK)
+             req->backend->close = 1;
+diff --git a/modules/proxy/mod_proxy_scgi.c b/modules/proxy/mod_proxy_scgi.c
+index 5444a5c..b279b0a 100644
+--- a/modules/proxy/mod_proxy_scgi.c
++++ b/modules/proxy/mod_proxy_scgi.c
+@@ -39,6 +39,7 @@
+ #include "mod_proxy.h"
+ #include "scgi.h"
+ 
++#include "../../hdhunter_api.h"
+ 
+ #define SCHEME "scgi"
+ #define PROXY_FUNCTION "SCGI"
+@@ -390,6 +391,16 @@ static int pass_response(request_rec *r, proxy_conn_rec *conn)
+         return status;
+     }
+ 
++    // HDHunter: Update encoding
++    hdhunter_set_chunked_encoding(ap_is_chunked(r->pool, apr_table_get(r->headers_out, "Transfer-Encoding")), HDHUNTER_MODE_SCGI);
++    // HDHunter: Update content_length
++    const char *clen = apr_table_get(r->headers_out, "Content-Length");
++    if (clen != NULL) {
++        apr_off_t cl;
++        ap_parse_strict_length(&cl, clen);
++        hdhunter_set_content_length(cl, HDHUNTER_MODE_SCGI);
++    }
++
+     conf = ap_get_module_config(r->per_dir_config, &proxy_scgi_module);
+     if (conf->sendfile && conf->sendfile != scgi_sendfile_off) {
+         short err = 1;
+@@ -453,6 +464,13 @@ static int pass_response(request_rec *r, proxy_conn_rec *conn)
+         }
+     }
+ 
++    apr_off_t readbytes;
++    apr_brigade_length(bb, 1, &readbytes);
++    if (readbytes > 0) {
++        // HDHunter: inc body length
++        hdhunter_inc_body_length(readbytes, HDHUNTER_MODE_SCGI);
++    }
++
+     if (ap_pass_brigade(r->output_filters, bb)) {
+         return AP_FILTER_ERROR;
+     }
+@@ -576,6 +594,8 @@ static int scgi_handler(request_rec *r, proxy_worker *worker,
+     }
+ 
+ cleanup:
++    // HDHunter: Mark message processed
++    hdhunter_mark_message_processed(HDHUNTER_MODE_SCGI);
+     if (backend) {
+         backend->close = 1; /* always close the socket */
+         ap_proxy_release_connection(PROXY_FUNCTION, backend, r->server);
+diff --git a/modules/proxy/mod_proxy_uwsgi.c b/modules/proxy/mod_proxy_uwsgi.c
+index fd76c95..81990ad 100644
+--- a/modules/proxy/mod_proxy_uwsgi.c
++++ b/modules/proxy/mod_proxy_uwsgi.c
+@@ -50,6 +50,7 @@ limitations under the License.
+ 
+ #include "mod_proxy.h"
+ 
++#include "../hdhunter_api.h"
+ 
+ #define UWSGI_SCHEME "uwsgi"
+ #define UWSGI_DEFAULT_PORT 3031
+@@ -426,6 +427,16 @@ static int uwsgi_response(request_rec *r, proxy_conn_rec * backend,
+         return status;
+     }
+ 
++    // HDHunter: Update encoding
++    hdhunter_set_chunked_encoding(ap_is_chunked(r->pool, apr_table_get(r->headers_out, "Transfer-Encoding")), HDHUNTER_MODE_UWSGI);
++    // HDHunter: Update content_length
++    const char *clen = apr_table_get(r->headers_out, "Content-Length");
++    if (clen != NULL) {
++        apr_off_t cl;
++        ap_parse_strict_length(&cl, clen);
++        hdhunter_set_content_length(cl, HDHUNTER_MODE_UWSGI);
++    }
++
+     while (!finish) {
+         rv = ap_get_brigade(rp->input_filters, bb,
+                             AP_MODE_READBYTES, mode, conf->io_buffer_size);
+@@ -453,6 +464,10 @@ static int uwsgi_response(request_rec *r, proxy_conn_rec * backend,
+         mode = APR_NONBLOCK_READ;
+         apr_brigade_length(bb, 0, &readbytes);
+         backend->worker->s->read += readbytes;
++        if (readbytes > 0) {
++            // HDHunter: inc body length
++            hdhunter_inc_body_length(readbytes, HDHUNTER_MODE_UWSGI);
++        }
+ 
+         if (APR_BRIGADE_EMPTY(bb)) {
+             apr_brigade_cleanup(bb);
+@@ -569,6 +584,8 @@ static int uwsgi_handler(request_rec *r, proxy_worker * worker,
+     }
+ 
+   cleanup:
++    // HDHunter: Mark message processed
++    hdhunter_mark_message_processed(HDHUNTER_MODE_UWSGI);
+     if (backend) {
+         backend->close = 1;     /* always close the socket */
+         ap_proxy_release_connection(UWSGI_SCHEME, backend, r->server);
+diff --git a/server/main.c b/server/main.c
+index 7da7aa2..5333b31 100644
+--- a/server/main.c
++++ b/server/main.c
+@@ -42,6 +42,8 @@
+ #include "util_ebcdic.h"
+ #include "ap_mpm.h"
+ 
++#include "../hdhunter_api.h"
++
+ #if APR_HAVE_UNISTD_H
+ #include <unistd.h>
+ #endif
+@@ -487,6 +489,7 @@ static void usage(process_rec *process)
+ 
+ int main(int argc, const char * const argv[])
+ {
++    hdhunter_init();
+     char c;
+     int showcompile = 0, showdirectives = 0;
+     const char *confname = SERVER_CONFIG_FILE;
+diff --git a/server/protocol.c b/server/protocol.c
+index 6f9540a..aad47f0 100644
+--- a/server/protocol.c
++++ b/server/protocol.c
+@@ -49,6 +49,8 @@
+ #include "util_ebcdic.h"
+ #include "scoreboard.h"
+ 
++#include "../../hdhunter_api.h"
++
+ #if APR_HAVE_STDARG_H
+ #include <stdarg.h>
+ #endif
+@@ -282,6 +284,13 @@ AP_DECLARE(apr_status_t) ap_rgetline_core(char **s, apr_size_t n,
+                  */
+                 continue;
+             }
++            if (r->proxyreq != PROXYREQ_RESPONSE) {
++                // Update consumed length: start line and headers
++                hdhunter_inc_consumed_length(len, HDHUNTER_MODE_REQUEST);
++            } else {
++                // Update consumed length (for responses, uwsgi)
++                hdhunter_inc_consumed_length(len, HDHUNTER_MODE_RESPONSE | HDHUNTER_MODE_UWSGI);
++            }
+ 
+             /* Would this overrun our buffer?  If so, we'll die. */
+             if (n < bytes_handled + len) {
+diff --git a/server/util_script.c b/server/util_script.c
+index 45c49d5..26043fc 100644
+--- a/server/util_script.c
++++ b/server/util_script.c
+@@ -37,6 +37,8 @@
+ #include "apr_date.h"           /* For apr_date_parse_http() */
+ #include "util_ebcdic.h"
+ 
++#include "../../hdhunter_api.h"
++
+ #ifdef OS2
+ #define INCL_DOS
+ #include <os2.h>
+@@ -794,6 +796,9 @@ static int getsfunc_BRIGADE(char *buf, int len, void *arg)
+             src++;
+         }
+ 
++        // HDHunter: getline for scgi and fastcgi
++        hdhunter_inc_consumed_length(src - bucket_data, HDHUNTER_MODE_SCGI | HDHUNTER_MODE_FASTCGI);
++
+         if (src < src_end) {
+             apr_bucket_split(e, src - bucket_data);
+         }
